@@ -56,6 +56,10 @@ cli = [
 backend = [
     # Alias: core (no additional deps); provided for clarity in installation commands
 ]
+http = [
+    "fastapi>=0.115.8",
+    "uvicorn>=0.34.0",
+]
 providers = [
     "anthropic==0.58.2",
     "google-genai==1.29.0",

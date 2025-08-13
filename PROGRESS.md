@@ -50,7 +50,7 @@ Phase 5 – Optional Enhancements (Planned / In Progress)
 26. Consolidate duplicate mock helpers in tests ....................... [ ]
 27. Fix coroutine warning (_maybe_await un-awaited) ................... [x] (callbacks scheduled; no warnings in tests)
 28. Expand coverage: add_task modifies queue / pause resume ........... [ ]
-29. FastAPI/HTTP wrapper prototype (serve run_task) ................... [ ]
+29. FastAPI/HTTP wrapper prototype (serve run_task) ................... [x]
 30. CI matrix: core vs providers extras ............................... [ ]
 31. Privacy: screenshot redaction / event sanitization hooks .......... [ ]
 32. Document synthetic (disable_browser) mode in README ............... [ ]
@@ -94,3 +94,6 @@ Changelog Snippet (Recent)
  - Added SecurityWatchdog glob pattern support for scheme-prefixed wildcards (http://*.example.com)
  - Introduced lightweight BrowserSession legacy helpers (create_new_tab, get_current_page, refresh, execute_javascript, take_screenshot, get_scroll_info, get_tabs_info, switch_to_tab)
  - Updated failing CI test for URL allowance; remaining multi-tab test still failing (investigating Target.createTarget behavior under test harness)
+2025-08-14:
+ - Added optional FastAPI server (browser_use/http/server.py) with /health, /build_task, /run_task
+ - Added [http] optional extras (fastapi, uvicorn); docs updated with curl examples

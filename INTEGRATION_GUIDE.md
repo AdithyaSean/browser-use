@@ -45,6 +45,25 @@ Planned Additions
  - Simpler exception taxonomy
  - Optional lightweight HTTP service wrapper (FastAPI)
 
+HTTP Wrapper (Optional)
+-----------------------
+A minimal FastAPI app is available for quick HTTP integration.
+
+Run:
+ - Install extras: pip install "browser-use[http]"
+ - Start server: uvicorn browser_use.http.server:app --host 0.0.0.0 --port 8000
+
+Test with curl (macOS zsh):
+ - Health: curl -s http://localhost:8000/health | jq
+ - Build task:
+    curl -s -X POST http://localhost:8000/build_task \
+       -H 'Content-Type: application/json' \
+       -d '{"base_task":"Find latest Python release notes","user_profile":{"id":"123","plan":"pro"}}' | jq
+ - Run task (requires an API key in env, e.g., OPENAI_API_KEY):
+    curl -s -X POST http://localhost:8000/run_task \
+       -H 'Content-Type: application/json' \
+       -d '{"base_task":"Open python.org and summarize the latest release notes","headless":true,"max_steps":5}' | jq
+
 Security Notes
 --------------
 If you use sensitive_data with domain-scoped credentials, set BrowserProfile.allowed_domains to restrict exfiltration via prompt injection.
