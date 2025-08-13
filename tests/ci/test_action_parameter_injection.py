@@ -136,15 +136,15 @@ class TestBrowserContext:
 		event = browser_session.event_bus.dispatch(NavigateToUrlEvent(url=f'{base_url}/'))
 		await event
 
-		# Get the current page
-		page = await browser_session.get_current_page()
+		# Get the current page URL and title
+		page_url = await browser_session.get_current_page_url()
+		page_title = await browser_session.get_current_page_title()
 
 		# Verify the page URL matches what we navigated to
-		assert f'{base_url}/' in page.url
+		assert f'{base_url}/' in page_url
 
 		# Verify the page title
-		title = await page.title()
-		assert title == 'Test Home Page'
+		assert page_title == 'Test Home Page'
 
 	@pytest.mark.asyncio
 	async def test_refresh_page(self, browser_session, base_url):
@@ -154,20 +154,20 @@ class TestBrowserContext:
 		event = browser_session.event_bus.dispatch(NavigateToUrlEvent(url=f'{base_url}/'))
 		await event
 
-		# Get the current page before refresh
-		page_before = await browser_session.get_current_page()
+		# Get the current page URL before refresh
+		page_url_before = await browser_session.get_current_page_url()
 
 		# Refresh the page
 		await browser_session.refresh()
 
-		# Get the current page after refresh
-		page_after = await browser_session.get_current_page()
+		# Get the current page URL after refresh
+		page_url_after = await browser_session.get_current_page_url()
 
 		# Verify it's still on the same URL
-		assert page_after.url == page_before.url
+		assert page_url_after == page_url_before
 
 		# Verify the page title is still correct
-		title = await page_after.title()
+		title = await browser_session.get_current_page_title()
 		assert title == 'Test Home Page'
 
 	@pytest.mark.asyncio

@@ -1631,6 +1631,7 @@ def main(ctx: click.Context, debug: bool = False, **kwargs):
 
 	logger = logging.getLogger('browser_use.startup')
 	logger.info('Starting Browser-Use initialization')
+	logger.warning('CLI/TUI is in deprecation path for backend-only usage. Prefer programmatic API: from browser_use.api import run_task')
 	if debug:
 		logger.debug(f'System info: Python {sys.version.split()[0]}, Platform: {sys.platform}')
 

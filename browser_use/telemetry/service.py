@@ -20,8 +20,30 @@ POSTHOG_EVENT_SETTINGS = {
 }
 
 
+TELEMETRY_FORCE_DISABLED = False  # global flag to force disable telemetry (e.g., tests / synthetic mode)
+
+
+def disable_telemetry() -> None:
+	"""Force disable telemetry for the remainder of the process.
+
+	Safe to call multiple times; takes effect on next ProductTelemetry() construction.
+	If a singleton instance already exists, it will be neutered in-place.
+	"""
+	global TELEMETRY_FORCE_DISABLED
+	TELEMETRY_FORCE_DISABLED = True
+	# If singleton already created, attempt to neuter client
+	try:  # pragma: no cover - defensive
+		from browser_use.telemetry import service as _svc  # circular-safe
+		inst = getattr(_svc, 'ProductTelemetry', None)
+		if inst and isinstance(inst, ProductTelemetry):  # type: ignore[arg-type]
+			if hasattr(inst, '_posthog_client'):
+				inst._posthog_client = None
+	except Exception:
+		pass
+
+
 @singleton
-class ProductTelemetry:
+class ProductTelemetry:  # type: ignore[override]
 	"""
 	Service for capturing anonymized telemetry data.
 
@@ -36,7 +58,7 @@ class ProductTelemetry:
 	_curr_user_id = None
 
 	def __init__(self) -> None:
-		telemetry_disabled = not CONFIG.ANONYMIZED_TELEMETRY
+		telemetry_disabled = (not CONFIG.ANONYMIZED_TELEMETRY) or TELEMETRY_FORCE_DISABLED
 		self.debug_logging = CONFIG.BROWSER_USE_LOGGING_LEVEL == 'debug'
 
 		if telemetry_disabled:

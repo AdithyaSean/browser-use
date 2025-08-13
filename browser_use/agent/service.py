@@ -133,6 +133,7 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 		browser_profile: BrowserProfile | None = None,
 		browser_session: BrowserSession | None = None,
 		controller: Controller[Context] | None = None,
+		disable_browser: bool = False,  # NEW: test/logic mode skips real browser startup
 		# Initial agent run parameters
 		sensitive_data: dict[str, str | dict[str, str]] | None = None,
 		initial_actions: list[dict[str, dict[str, Any]]] | None = None,
@@ -234,6 +235,7 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 		self.llm = llm
 		self.preload = preload
 		self.include_recent_events = include_recent_events
+		self.disable_browser = disable_browser  # store flag
 		self.controller = (
 			controller if controller is not None else Controller(display_files_in_done_text=display_files_in_done_text)
 		)
@@ -448,19 +450,26 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 		# Context
 		self.context: Context | None = context
 
-		# Telemetry
-		self.telemetry = ProductTelemetry()
+		# Telemetry (skip network + PostHog when running in synthetic disable_browser mode)
+		if self.disable_browser:
+			class _NullTelemetry:  # lightweight no-op stand‑in
+				def capture(self, event):
+					return None
+				def flush(self):
+					return None
+			self.telemetry = _NullTelemetry()  # type: ignore[attr-defined]
+		else:
+			self.telemetry = ProductTelemetry()
 
 		# Event bus with WAL persistence
 		# Default to ~/.config/browseruse/events/{agent_session_id}.jsonl
 		# wal_path = CONFIG.BROWSER_USE_CONFIG_DIR / 'events' / f'{self.session_id}.jsonl'
 		self.eventbus = EventBus(name=f'Agent_{str(self.id)[-4:]}')
 
-		# Cloud sync service
-		self.enable_cloud_sync = CONFIG.BROWSER_USE_CLOUD_SYNC
-		if self.enable_cloud_sync or cloud_sync is not None:
+		# Cloud sync service (disabled for synthetic runs to avoid network noise)
+		self.enable_cloud_sync = False if self.disable_browser else CONFIG.BROWSER_USE_CLOUD_SYNC
+		if (self.enable_cloud_sync or cloud_sync is not None) and not self.disable_browser:
 			self.cloud_sync = cloud_sync or CloudSync()
-			# Register cloud sync handler
 			self.eventbus.on('*', self.cloud_sync.handle_event)
 
 		if self.settings.save_conversation_path:
@@ -699,21 +708,46 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 
 		assert self.browser_session is not None, 'BrowserSession is not set up'
 
-		self.logger.debug(f'🌐 Step {self.state.n_steps}: Getting browser state...')
-		# Always take screenshots for all steps
-		# Use caching based on preload setting - if preload is False, don't use cached state
-		use_cache = self.preload
-		self.logger.debug(f'📸 Requesting browser state with include_screenshot=True, cached={use_cache}')
-		browser_state_summary = await self.browser_session.get_browser_state_summary(
-			cache_clickable_elements_hashes=True,
-			include_screenshot=True,  # always capture even if use_vision=False so that cloud sync is useful (it's fast now anyway)
-			cached=use_cache,
-			include_recent_events=self.include_recent_events,
-		)
-		if browser_state_summary.screenshot:
-			self.logger.debug(f'📸 Got browser state WITH screenshot, length: {len(browser_state_summary.screenshot)}')
+		# Provide synthetic minimal browser state when browser disabled (tests / pure LLM logic)
+		if getattr(self, 'disable_browser', False):
+			from browser_use.browser.views import BrowserStateSummary, TabInfo, PageInfo, PLACEHOLDER_4PX_SCREENSHOT
+			from browser_use.dom.views import SerializedDOMState
+			self.logger.debug('🧪 disable_browser=True: Using synthetic BrowserStateSummary')
+			browser_state_summary = BrowserStateSummary(
+				dom_state=SerializedDOMState(_root=None, selector_map={}),
+				url='about:blank',
+				title='(no browser)',
+				tabs=[TabInfo(page_id=0, url='about:blank', title='about:blank')],
+				screenshot=PLACEHOLDER_4PX_SCREENSHOT,
+				page_info=PageInfo(
+					viewport_width=0,
+					viewport_height=0,
+					page_width=0,
+					page_height=0,
+					scroll_x=0,
+					scroll_y=0,
+					pixels_above=0,
+					pixels_below=0,
+					pixels_left=0,
+					pixels_right=0,
+				),
+			)
 		else:
-			self.logger.debug('📸 Got browser state WITHOUT screenshot')
+			self.logger.debug(f'🌐 Step {self.state.n_steps}: Getting browser state...')
+			# Always take screenshots for all steps
+			# Use caching based on preload setting - if preload is False, don't use cached state
+			use_cache = self.preload
+			self.logger.debug(f'📸 Requesting browser state with include_screenshot=True, cached={use_cache}')
+			browser_state_summary = await self.browser_session.get_browser_state_summary(
+				cache_clickable_elements_hashes=True,
+				include_screenshot=True,
+				cached=use_cache,
+				include_recent_events=self.include_recent_events,
+			)
+			if browser_state_summary.screenshot:
+				self.logger.debug(f'📸 Got browser state WITH screenshot, length: {len(browser_state_summary.screenshot)}')
+			else:
+				self.logger.debug('📸 Got browser state WITHOUT screenshot')
 
 		# Check for new downloads after getting browser state (catches PDF auto-downloads and previous step downloads)
 		await self._check_and_update_downloads(f'Step {self.state.n_steps}: after getting browser state')
@@ -1292,15 +1326,18 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 			# Emit CreateAgentTaskEvent at the START of run()
 			self.eventbus.dispatch(CreateAgentTaskEvent.from_agent(self))
 
-			# Start browser session and attach watchdogs
+			# Start browser session and attach watchdogs unless disabled (test/logic mode)
 			assert self.browser_session is not None, 'Browser session must be initialized before starting'
-			self.logger.debug('🌐 Starting browser session...')
-			from browser_use.browser.events import BrowserStartEvent, NavigateToUrlEvent
+			if not getattr(self, 'disable_browser', False):
+				self.logger.debug('🌐 Starting browser session...')
+				from browser_use.browser.events import BrowserStartEvent, NavigateToUrlEvent
 
-			event = self.browser_session.event_bus.dispatch(BrowserStartEvent())
-			await event
+				event = self.browser_session.event_bus.dispatch(BrowserStartEvent())
+				await event
 
-			self.logger.debug('🔧 Browser session started with watchdogs attached')
+				self.logger.debug('🔧 Browser session started with watchdogs attached')
+			else:
+				self.logger.debug('🧪 disable_browser=True: Skipping real browser startup')
 
 			# Check if task contains a URL and navigate to it immediately (only if preload is enabled)
 			if self.preload:

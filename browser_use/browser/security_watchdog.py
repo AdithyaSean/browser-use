@@ -157,6 +157,19 @@ class SecurityWatchdog(BaseWatchdog):
 					prefix = pattern[:-1]  # Remove the * at the end
 					if url.startswith(prefix):
 						return True
+				elif pattern.startswith(('http://*.', 'https://*.')):
+					# Pattern like http://*.example.com or https://*.example.com
+					# Extract the scheme and domain part
+					if pattern.startswith('http://*.'):
+						scheme = 'http'
+						domain_part = pattern[9:]  # Remove 'http://*.'
+					else:  # https://*.
+						scheme = 'https'
+						domain_part = pattern[10:]  # Remove 'https://*.'
+					
+					# Check if scheme matches and domain matches (including subdomains)
+					if parsed.scheme == scheme and (host == domain_part or host.endswith('.' + domain_part)):
+						return True
 				else:
 					# Use fnmatch for other glob patterns
 					if fnmatch.fnmatch(host, pattern):

@@ -1126,6 +1126,156 @@ class BrowserSession(BaseModel):
 			return target_info.get('title', 'Unknown page title')
 		return 'Unknown page title'
 
+	# ========= Backwards Compatibility Helpers (used by legacy tests) =========
+
+	class _LegacyPageShim:
+		"""Lightweight shim object mimicking a Playwright Page subset.
+
+		Exposes .url and async .title() so older tests that expected a
+		page object keep working without re-introducing Playwright heavy deps.
+		"""
+
+		def __init__(self, session: 'BrowserSession') -> None:
+			self._session = session
+			self._url: str | None = None
+			self._title: str | None = None
+
+		@property
+		def url(self) -> str:
+			return self._url or ''
+
+		async def title(self) -> str:
+			if self._title is None:
+				self._title = await self._session.get_current_page_title()
+			return self._title
+
+	async def get_current_page(self) -> '_LegacyPageShim':  # noqa: D401 - legacy API
+		"""Return a shim standing in for the current page (legacy API).
+
+		New code should call get_current_page_url()/get_current_page_title().
+		"""
+		shim = self._LegacyPageShim(self)
+		shim._url = await self.get_current_page_url()
+		return shim
+
+	async def create_new_tab(self, url: str = 'about:blank') -> None:
+		"""Create a new tab pointing at url and focus it (legacy helper)."""
+		try:
+			target_id = await self._cdp_create_new_page(url=url, background=False)
+			# Update focus
+			self.agent_focus.target_id = target_id  # type: ignore[attr-defined]
+			# Poll until target appears with URL (simple timeout)
+			for _ in range(20):
+				targets = await self._cdp_get_all_pages()
+				if any(t.get('targetId') == target_id for t in targets):
+					break
+				await asyncio.sleep(0.05)
+		except Exception as e:  # pragma: no cover - defensive
+			self.logger.warning(f'create_new_tab failed: {e}')
+
+	async def get_tabs_info(self) -> list[dict[str, str]]:
+		"""Return minimal info about open tabs for tests.
+
+		Each item: {"url": str, "title": str, "targetId": str}
+		"""
+		infos: list[dict[str, str]] = []
+		try:
+			all_targets = await self.cdp_client.send.Target.getTargets()
+			for t in all_targets.get('targetInfos', []):
+				if t.get('type') in ('page', 'tab'):
+					infos.append(
+						{
+							'url': t.get('url', ''),
+							'title': t.get('title', ''),
+							'targetId': t.get('targetId', ''),
+						}
+					)
+		except Exception as e:  # pragma: no cover
+			self.logger.warning(f'get_tabs_info fallback due to error: {e}')
+		return infos
+
+	async def switch_to_tab(self, index: int) -> None:
+		"""Switch focus to tab at index (legacy helper)."""
+		targets = await self._cdp_get_all_pages()
+		if 0 <= index < len(targets):
+			self.agent_focus.target_id = targets[index]['targetId']  # type: ignore[attr-defined]
+			await asyncio.sleep(0.02)
+
+	async def get_scroll_info(self, _legacy_page: object | None = None) -> tuple[int, int]:  # noqa: D401
+		"""Return (pixels_above_viewport, pixels_below_viewport).
+
+		Implemented via a small Runtime.evaluate script.
+		"""
+		try:
+			cdp_session = await self.get_or_create_cdp_session()
+			script = """
+			(function(){
+			  const scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+			  const viewportH = window.innerHeight || document.documentElement.clientHeight || 0;
+			  const fullH = Math.max(
+			    document.body.scrollHeight,
+			    document.documentElement.scrollHeight,
+			    document.body.offsetHeight,
+			    document.documentElement.offsetHeight,
+			    document.body.clientHeight,
+			    document.documentElement.clientHeight
+			  );
+			  return {above: scrollTop, below: Math.max(fullH - (scrollTop + viewportH), 0)};
+			})();
+			"""
+			result = await cdp_session.cdp_client.send.Runtime.evaluate(
+				params={'expression': script, 'returnByValue': True}, session_id=cdp_session.session_id
+			)
+			data = (result.get('result', {}) or {}).get('value', {})
+			return int(data.get('above', 0)), int(data.get('below', 0))
+		except Exception as e:  # pragma: no cover - defensive
+			self.logger.warning(f'get_scroll_info failed: {e}')
+			return 0, 0
+
+	async def refresh(self) -> None:  # noqa: D401 - legacy
+		"""Legacy refresh current page helper for older tests.
+
+		Implemented by re-navigating to the current page URL via CDP.
+		"""
+		try:
+			current_url = await self.get_current_page_url()
+			if not current_url or current_url == 'about:blank':
+				return
+			# Use the focused session to navigate again
+			cdp_session = await self.get_or_create_cdp_session()
+			await cdp_session.cdp_client.send.Page.navigate(
+				params={'url': current_url}, session_id=cdp_session.session_id
+			)
+			await asyncio.sleep(0.05)
+		except Exception as e:  # pragma: no cover
+			self.logger.warning(f'refresh failed: {e}')
+
+	async def execute_javascript(self, script: str) -> object:  # noqa: D401 - legacy
+		"""Execute JavaScript in the current page context (legacy helper)."""
+		try:
+			cdp_session = await self.get_or_create_cdp_session()
+			result = await cdp_session.cdp_client.send.Runtime.evaluate(
+				params={'expression': script, 'returnByValue': True}, session_id=cdp_session.session_id
+			)
+			if 'result' in result and 'value' in result['result']:
+				return result['result']['value']
+			return None
+		except Exception as e:  # pragma: no cover
+			self.logger.warning(f'execute_javascript failed: {e}')
+			return None
+
+	async def take_screenshot(self) -> str | None:  # noqa: D401 - legacy
+		"""Capture a PNG screenshot (base64) of current page via CDP."""
+		try:
+			cdp_session = await self.get_or_create_cdp_session()
+			result = await cdp_session.cdp_client.send.Page.captureScreenshot(
+				params={'format': 'png'}, session_id=cdp_session.session_id
+			)
+			return result.get('data')
+		except Exception as e:  # pragma: no cover
+			self.logger.warning(f'take_screenshot failed: {e}')
+			return None
+
 	# ========== DOM Helper Methods ==========
 
 	async def get_dom_element_by_index(self, index: int) -> EnhancedDOMTreeNode | None:

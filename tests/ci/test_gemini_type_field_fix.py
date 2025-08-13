@@ -2,6 +2,13 @@
 Test to reproduce and verify fix for GitHub issue #2470:
 "Python field with name 'type' handled differently between Gemini and OpenAI GPT"
 """
+import importlib.util
+import pytest
+
+# Skip entire module if google-genai provider stack not installed
+google_genai_available = importlib.util.find_spec('google.genai') is not None
+if not google_genai_available:
+	pytest.skip('google-genai not installed; skipping Gemini schema tests', allow_module_level=True)
 
 from browser_use.llm.google.chat import ChatGoogle
 from browser_use.llm.schema import SchemaOptimizer

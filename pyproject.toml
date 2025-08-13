@@ -14,7 +14,6 @@ dependencies = [
     "aiofiles>=24.1.0",
     "anyio>=4.9.0",
     "bubus>=1.5.1",
-    "google-api-core>=2.25.0",
     "httpx>=0.28.1",
     "markdownify==1.1.0",
     "patchright>=1.52.5",
@@ -31,14 +30,8 @@ dependencies = [
     "typing-extensions>=4.12.2",
     "uuid7>=0.1.0",
     "authlib>=1.6.0",
-    "google-genai==1.29.0",
-    "openai==1.99.2",
-    "anthropic==0.58.2",
-    "groq>=0.30.0",
-    "ollama>=0.5.1",
-    "google-api-python-client>=2.174.0",
-    "google-auth>=2.40.3",
-    "google-auth-oauthlib>=1.2.2",
+    "openai==1.99.2",  # core default provider
+    # Provider-specific libs moved to optional extras (providers)
     "mcp>=1.10.1",
     "pypdf>=5.7.0",
     "cdp-use>=1.4.0",
@@ -59,6 +52,45 @@ cli = [
     "rich>=14.0.0",
     "click>=8.1.8",
     "textual>=3.2.0",
+]
+backend = [
+    # Alias: core (no additional deps); provided for clarity in installation commands
+]
+providers = [
+    "anthropic==0.58.2",
+    "google-genai==1.29.0",
+    "google-api-core>=2.25.0",
+    "google-api-python-client>=2.174.0",
+    "google-auth>=2.40.3",
+    "google-auth-oauthlib>=1.2.2",
+    "groq>=0.30.0",
+    "ollama>=0.5.1",
+]
+test = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=1.0.0",
+    # Include timeout plugin because pytest config sets 'timeout' option; avoids unknown config warnings
+    "pytest-timeout>=2.4.0",
+]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=1.0.0",
+    "pytest-xdist>=3.7.0",
+    "pytest-timeout>=2.4.0",
+    "pytest-httpserver>=1.0.8",
+    "ruff>=0.11.2",
+    "pyright>=1.1.403",
+    "pre-commit>=4.2.0",
+    "codespell>=2.4.1",
+    "pillow>=11.2.1",
+    "tokencost>=0.1.16",
+    "build>=1.2.2",
+    "ipdb>=0.13.13",
+    "fastapi>=0.115.8",
+    "uvicorn>=0.34.0",
+    "inngest>=0.4.19",
+    "ty>=0.0.1a1",
+    "lmnr[all]>=0.6.13",
 ]
 aws = [
     "boto3>=1.38.45"
@@ -81,7 +113,7 @@ eval = [
     "browserbase==1.4.0",
 ]
 all = [
-    "browser-use[cli,examples,aws]",
+    "browser-use[backend,cli,examples,aws,providers]",
 ]
 
 # will prefer to use local source code checked out in ../../browser-use (if present) instead of pypi browser-use package
@@ -158,7 +190,10 @@ testpaths = [
     "tests"
 ]
 python_files = ["test_*.py", "*_test.py"]
-addopts = "-svx --strict-markers --tb=short --dist=loadscope"
+# Exclude legacy/experimental tests from discovery (they rely on removed APIs)
+addopts = "-svx --strict-markers --tb=short --ignore=tests/old"
+# Removed --dist=loadscope to avoid failures when PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 (VS Code) prevents xdist from loading.
+# Re-enable parallel distribution manually via: pytest -n auto --dist=loadscope
 log_cli = true
 log_cli_format = "%(levelname)-8s [%(name)s] %(message)s"
 filterwarnings = [

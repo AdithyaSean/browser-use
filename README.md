@@ -81,6 +81,63 @@ pip install "browser-use[cli]"
 browser-use
 ```
 
+### Minimal backend usage (no CLI/UI)
+
+If you only need to run agents programmatically in a backend service, install the core package (only OpenAI client bundled by default) and use the lightweight API wrapper:
+
+```python
+from browser_use.api import run_task_sync
+
+history = run_task_sync(
+  base_task="Extract the H1 text from https://example.com and return it as JSON",
+  user_profile={"tier": "pro", "locale": "en-US"},
+  headless=True,
+  max_steps=10,
+)
+
+print("Final result:", history.final_result())
+# For structured output, pass output_model_schema=YourPydanticModel
+```
+
+Install additional model providers only if you need them:
+
+```bash
+pip install "browser-use[providers]"   # Anthropic, Google, Groq, Ollama, etc.
+```
+
+Or pick specific extras:
+
+```bash
+pip install "browser-use[cli]"          # interactive terminal UI
+pip install "browser-use[examples]"     # example integrations & demos
+pip install "browser-use[aws]"          # AWS Bedrock helpers
+```
+
+Why this change? Core install stays small & faster (fewer heavy transitive deps). Importing a missing provider raises an ImportError guiding you to add the [providers] extra.
+
+### Intervention & observability hooks
+
+You can observe each step and browser events, and optionally intervene (pause/stop/add a follow-up task):
+
+```python
+async def on_step(agent, history):
+  if history.number_of_steps() == 1:
+    return {"add_task": "Also capture the page title", "stop": True}
+
+def on_browser_event(evt):
+  if evt.get("type") == "navigate":
+    print("Navigated to", evt.get("url"))
+
+history = await run_task(
+  base_task="Open https://example.com and summarize the hero section",
+  llm=None,  # auto-picks provider based on available API key
+  on_step=on_step,
+  on_browser_event=on_browser_event,
+)
+```
+
+For more details see `INTEGRATION_GUIDE.md`.
+
 ## MCP Integration
 
 Browser-use supports the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), enabling integration with Claude Desktop and other MCP-compatible clients.
