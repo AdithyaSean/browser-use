@@ -21,17 +21,17 @@ llm = ChatOllama(
   # Keep the model loaded for faster successive calls
   keep_alive=os.getenv('OLLAMA_KEEP_ALIVE', '30m'),
   # Slightly higher request timeout to accommodate local generation
-  timeout=float(os.getenv('OLLAMA_TIMEOUT', '180')),
+  timeout=float(os.getenv('OLLAMA_TIMEOUT', '240')),
   # Options passed through to Ollama
   options={
     # Larger context for long prompts; adjust to your model capability
-    'num_ctx': int(os.getenv('OLLAMA_NUM_CTX', '8192')),
+    'num_ctx': int(os.getenv('OLLAMA_NUM_CTX', '16384')),
     # Deterministic, concise outputs
-    'temperature': float(os.getenv('OLLAMA_TEMPERATURE', '0.2')),
-    'top_p': float(os.getenv('OLLAMA_TOP_P', '0.9')),
-    'repeat_penalty': float(os.getenv('OLLAMA_REPEAT_PENALTY', '1.1')),
-    # Limit output tokens to avoid overlong thoughts
-    'num_predict': int(os.getenv('OLLAMA_NUM_PREDICT', '768')),
+    'temperature': float(os.getenv('OLLAMA_TEMPERATURE', '0.1')),
+    'top_p': float(os.getenv('OLLAMA_TOP_P', '0.8')),
+    'repeat_penalty': float(os.getenv('OLLAMA_REPEAT_PENALTY', '1.05')),
+    # Limit output tokens to avoid overlong thoughts (gpt-oss can run long)
+    'num_predict': int(os.getenv('OLLAMA_NUM_PREDICT', '512')),
   }
 )
 
@@ -94,7 +94,9 @@ agent = Agent(
 
 
 async def main():
-	await agent.run()
+  # Basic startup info for troubleshooting
+  print(f"Using Ollama model: {llm.model} @ {llm.host}")
+  await agent.run()
 
 
 if __name__ == '__main__':

@@ -73,6 +73,16 @@ class ChatOllama(BaseChatModel):
 	async def ainvoke(
 		self, messages: list[BaseMessage], output_format: type[T] | None = None
 	) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
+		# Simple model-specific tweak: JSON grammar is often unreliable with gpt-oss models
+		# Reduce complexity by disabling format="json" up-front for these.
+		if output_format is not None and isinstance(self.model, str) and 'gpt-oss' in self.model.lower():
+			if not self._disable_format_json:
+				self._disable_format_json = True
+				logger.warning(
+					'Ollama structured output: disabling format="json" for model %s (known to be unreliable for JSON grammar)',
+					self.model,
+				)
+
 		# Prepare messages; when structured output is requested, inject the full schema into a system hint
 		_augmented_messages = list(messages)
 		schema: dict[str, Any] | None = None
@@ -107,6 +117,17 @@ class ChatOllama(BaseChatModel):
 							return text[start : i + 1]
 			return None
 
+
+		def _log_snippet(label: str, text: str | None, level: int = logging.WARNING) -> None:
+			"""Log a short snippet of model output to aid debugging without flooding logs."""
+			if text is None:
+				logger.log(level, f'{label}: <no text>')
+				return
+			_snippet = text.strip().replace('\n', ' ')
+			if len(_snippet) > 1000:
+				_snippet = _snippet[:1000] + '…'
+			logger.log(level, f"{label}: len={len(text)} sample='{_snippet}'")
+
 		try:
 			if output_format is None:
 				response = await self.get_client().chat(
@@ -132,6 +153,8 @@ class ChatOllama(BaseChatModel):
 						)
 						completion_text = response.message.content or ''
 						if not completion_text.strip():
+							# Surface the raw (empty) outcome to aid debugging
+							_log_snippet('Ollama format=json returned empty completion', completion_text)
 							raise ValueError('Empty completion from model with format=json')
 						try:
 							parsed = output_format.model_validate_json(completion_text)
@@ -140,6 +163,7 @@ class ChatOllama(BaseChatModel):
 							logger.debug('Ollama structured output: direct parse failed on format="json" primary attempt, trying JSON extraction')
 							maybe_json = _extract_first_json_object(completion_text)
 							if not maybe_json:
+								_log_snippet('Ollama format=json completion (no JSON object found)', completion_text)
 								raise
 							parsed = output_format.model_validate_json(maybe_json)
 							logger.debug('Ollama structured output: parsed JSON via extraction from format="json" primary attempt')
@@ -168,6 +192,8 @@ class ChatOllama(BaseChatModel):
 						parsed = output_format.model_validate_json(maybe_json)
 						logger.debug('Ollama structured output: parsed JSON via extraction from free-form response')
 						return ChatInvokeCompletion(completion=parsed, usage=None)
+					# No JSON found or parse failed; log a sample to help troubleshoot
+					_log_snippet('Ollama free-form completion (no valid JSON found)', free_text)
 				except Exception as e2:
 					logger.warning(
 						f'Ollama structured output: free-form extraction attempt failed ({type(e2).__name__}: {e2}); trying embedded schema prompt'
@@ -185,6 +211,7 @@ class ChatOllama(BaseChatModel):
 					)
 					schema_text = response_schema.message.content or ''
 					if not schema_text.strip():
+						_log_snippet('Ollama embedded-schema completion returned empty text', schema_text)
 						raise ValueError('Empty completion from model with embedded JSON schema prompt')
 					try:
 						parsed = output_format.model_validate_json(schema_text)
@@ -193,6 +220,7 @@ class ChatOllama(BaseChatModel):
 						logger.debug('Ollama structured output: direct parse failed on schema attempt, trying JSON extraction')
 						maybe_json = _extract_first_json_object(schema_text)
 						if not maybe_json:
+							_log_snippet('Ollama embedded-schema completion (no JSON object found)', schema_text)
 							raise (parse_error or ValueError('Failed to extract JSON from embedded schema attempt'))
 						parsed = output_format.model_validate_json(maybe_json)
 						logger.debug('Ollama structured output: parsed JSON via extraction from embedded schema attempt')
