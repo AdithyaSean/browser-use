@@ -35,6 +35,11 @@ class ChatOllama(BaseChatModel):
 	timeout: float | httpx.Timeout | None = None
 	client_params: dict[str, Any] | None = None
 	options: dict[str, Any] | None = None
+	# Keep the model loaded between requests (supported by Ollama)
+	keep_alive: str | int | None = None
+	# Adaptive behavior: disable format="json" if it repeatedly fails/returns empty
+	_format_json_fail_count: int = 0
+	_disable_format_json: bool = False
 
 	# Static
 	@property
@@ -107,92 +112,94 @@ class ChatOllama(BaseChatModel):
 				response = await self.get_client().chat(
 					model=self.model,
 					messages=ollama_messages,
+					options=self.options,
+					keep_alive=self.keep_alive,
 				)
 
 				return ChatInvokeCompletion(completion=response.message.content or '', usage=None)
 			else:
-				# Prefer strict optimized JSON schema when available, but fall back to generic JSON
-				schema = SchemaOptimizer.create_optimized_json_schema(output_format)
+				# Try JSON-formatted response first (tends to be most reliable with local Ollama)
 				parse_error: Exception | None = None
-
-				# First attempt: prompt with embedded schema (no format) to maximize compatibility
-				try:
-					logger.debug('Ollama structured output: primary attempt with embedded schema prompt (no format)')
-					response = await self.get_client().chat(
-						model=self.model,
-						messages=ollama_messages,
-						options=self.options,
-					)
-					completion_text = response.message.content or ''
-					if not completion_text.strip():
-						logger.warning('Ollama structured output: empty completion with embedded schema prompt')
-						raise ValueError('Empty completion from model with embedded JSON schema prompt')
-					# Try direct parse, else try JSON extraction
+				if not self._disable_format_json:
+					logger.debug('Ollama structured output: primary attempt with format="json"')
 					try:
-						parsed = output_format.model_validate_json(completion_text)
-						logger.debug('Ollama structured output: parsed JSON directly from primary attempt')
-					except Exception:
-						logger.debug('Ollama structured output: direct parse failed on primary attempt, trying JSON extraction')
-						maybe_json = _extract_first_json_object(completion_text)
-						if not maybe_json:
-							raise
-						parsed = output_format.model_validate_json(maybe_json)
-						logger.debug('Ollama structured output: parsed JSON via extraction from primary attempt')
-					return ChatInvokeCompletion(completion=parsed, usage=None)
-				except Exception as e:
-					# Save and try again with a simpler JSON constraint which some models handle better
-					logger.warning(f'Ollama structured output: primary attempt failed ({type(e).__name__}: {e}); falling back to format="json"')
-					parse_error = e
+						response = await self.get_client().chat(
+							model=self.model,
+							messages=ollama_messages,
+							format='json',
+							options=self.options,
+							keep_alive=self.keep_alive,
+						)
+						completion_text = response.message.content or ''
+						if not completion_text.strip():
+							raise ValueError('Empty completion from model with format=json')
+						try:
+							parsed = output_format.model_validate_json(completion_text)
+							logger.debug('Ollama structured output: parsed JSON directly from format="json" primary attempt')
+						except Exception:
+							logger.debug('Ollama structured output: direct parse failed on format="json" primary attempt, trying JSON extraction')
+							maybe_json = _extract_first_json_object(completion_text)
+							if not maybe_json:
+								raise
+							parsed = output_format.model_validate_json(maybe_json)
+							logger.debug('Ollama structured output: parsed JSON via extraction from format="json" primary attempt')
+						return ChatInvokeCompletion(completion=parsed, usage=None)
+					except Exception as e1:
+						self._format_json_fail_count += 1
+						if self._format_json_fail_count >= 2 and not self._disable_format_json:
+							self._disable_format_json = True
+							logger.warning('Ollama structured output: disabling format="json" for this session after repeated failures/empty completions')
+						logger.warning(
+							f'Ollama structured output: format="json" attempt failed ({type(e1).__name__}: {e1}); trying free-form and JSON extraction'
+						)
+						parse_error = e1
 
-				# Second attempt: generic JSON output (more lenient than full schema)
-				logger.debug('Ollama structured output: second attempt with format="json"')
-				response = await self.get_client().chat(
-					model=self.model,
-					messages=ollama_messages,
-					format='json',
-					options=self.options,
-				)
-				completion_text = response.message.content or ''
-				if not completion_text.strip():
-					# If still empty, try a free-form response and extract JSON
-					logger.warning('Ollama structured output: empty completion with format="json"; trying free-form and JSON extraction')
+				# Second attempt: free-form response without format, then extract JSON
+				try:
 					response_free = await self.get_client().chat(
 						model=self.model,
 						messages=ollama_messages,
 						options=self.options,
+						keep_alive=self.keep_alive,
 					)
 					free_text = (response_free.message.content or '').strip()
 					maybe_json = _extract_first_json_object(free_text)
-					if not maybe_json:
-						# If we still can't get JSON, raise the original parse error for context
-						logger.error('Ollama structured output: failed to extract JSON from free-form response; re-raising initial error context')
-						raise parse_error
-					parsed = output_format.model_validate_json(maybe_json)
-					logger.debug('Ollama structured output: parsed JSON via extraction from free-form response (after format=json empty)')
-					return ChatInvokeCompletion(completion=parsed, usage=None)
-				# Try direct parse, else try JSON extraction
+					if maybe_json:
+						parsed = output_format.model_validate_json(maybe_json)
+						logger.debug('Ollama structured output: parsed JSON via extraction from free-form response')
+						return ChatInvokeCompletion(completion=parsed, usage=None)
+				except Exception as e2:
+					logger.warning(
+						f'Ollama structured output: free-form extraction attempt failed ({type(e2).__name__}: {e2}); trying embedded schema prompt'
+					)
+					parse_error = parse_error or e2
+
+				# Final attempt: prompt with embedded schema (no format)
 				try:
-					parsed = output_format.model_validate_json(completion_text)
-					logger.debug('Ollama structured output: parsed JSON directly from format="json" attempt')
-				except Exception:
-					logger.debug('Ollama structured output: direct parse failed on format="json" attempt, trying JSON extraction')
-					maybe_json = _extract_first_json_object(completion_text)
-					if not maybe_json:
-						# Third attempt: free-form without format, then extract JSON
-						logger.warning('Ollama structured output: JSON not found in format="json" response; trying free-form and extraction')
-						response_free = await self.get_client().chat(
-							model=self.model,
-							messages=ollama_messages,
-							options=self.options,
-						)
-						free_text = (response_free.message.content or '').strip()
-						maybe_json = _extract_first_json_object(free_text)
+					logger.debug('Ollama structured output: final attempt with embedded schema prompt (no format)')
+					response_schema = await self.get_client().chat(
+						model=self.model,
+						messages=ollama_messages,
+						options=self.options,
+						keep_alive=self.keep_alive,
+					)
+					schema_text = response_schema.message.content or ''
+					if not schema_text.strip():
+						raise ValueError('Empty completion from model with embedded JSON schema prompt')
+					try:
+						parsed = output_format.model_validate_json(schema_text)
+						logger.debug('Ollama structured output: parsed JSON directly from embedded schema attempt')
+					except Exception:
+						logger.debug('Ollama structured output: direct parse failed on schema attempt, trying JSON extraction')
+						maybe_json = _extract_first_json_object(schema_text)
 						if not maybe_json:
-							logger.error('Ollama structured output: failed to extract JSON from free-form response; re-raising initial error context')
-							raise parse_error
-					parsed = output_format.model_validate_json(maybe_json)
-					logger.debug('Ollama structured output: parsed JSON via extraction from free-form response')
-				return ChatInvokeCompletion(completion=parsed, usage=None)
+							raise (parse_error or ValueError('Failed to extract JSON from embedded schema attempt'))
+						parsed = output_format.model_validate_json(maybe_json)
+						logger.debug('Ollama structured output: parsed JSON via extraction from embedded schema attempt')
+					return ChatInvokeCompletion(completion=parsed, usage=None)
+				except Exception as e3:
+					logger.error('Ollama structured output: failed all attempts; re-raising initial error context')
+					raise parse_error or e3
 
 		except Exception as e:
 			raise ModelProviderError(message=str(e), model=self.name) from e
