@@ -2,7 +2,7 @@ import asyncio
 import os
 import sys
 
-from browser_use.llm.google import ChatGoogle
+from browser_use.llm import ChatOllama
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -14,9 +14,9 @@ load_dotenv()
 from browser_use import Agent
 
 # Initialize the model
-llm = ChatGoogle(
-model=os.getenv('BROWSER_USE_LLM_MODEL', 'gemini-2.5-flash'),
-api_key=os.getenv('GOOGLE_API_KEY')
+llm = ChatOllama(
+model=os.getenv('BROWSER_USE_LLM_MODEL', 'gpt-oss:20b'),
+host=os.getenv('OLLAMA_HOST', 'http://localhost:11434'),
 )
 
 
@@ -29,7 +29,6 @@ Applicant details (JSON):
   "appointmentDate": "2025-08-13T05:30:00.000Z",
   "time": "11:00 AM",
   "address": {
-    "confidence": 0.9,
     "value": "N 2, 2, WICKRAMASINGHA MAWATHA, MALKADUWAWA KURUNEGALA",
     "components": {
       "street": "SRI SARALANKARA MAWATHA",
@@ -38,7 +37,6 @@ Applicant details (JSON):
     }
   },
   "dob": {
-    "confidence": 0.95,
     "value": "2003/08/04",
     "originalFormat": "5003/08/04",
     "possibleFormats": [
@@ -47,40 +45,19 @@ Applicant details (JSON):
   },
   "document_type": {
     "value": "Sri Lankan National Identity Card",
-    "confidence": 0.95,
     "indicators": [
       "SRILANKA NATIONAL IDENTITY CARD"
     ]
   },
-  "extraction_metadata": {
-    "overall_confidence": 0.9316666666666668,
-    "text_quality": "excellent",
-    "corruption_level": "moderate",
-    "extraction_method": "enhanced_ocr_tolerant",
-    "issues_found": [
-      "High fragmentation detected"
-    ],
-    "raw_analysis": "Processed Sri Lankan National ID Card with severe OCR corruption.\n                  Identified key patterns: document type, gender indicator, address fragments."
-  },
   "gender": {
-    "value": "Male",
-    "confidence": 0.9,
-    "rawMatch": "Male"
+    "value": "Male"
   },
   "id_number": {
-    "confidence": 0.99,
     "type": "NIC",
-    "value": "200321710771",
-    "candidateNumbers": [
-      "200321710771"
-    ]
+    "value": "200321710771"
   },
   "name": {
-    "confidence": 0.9,
-    "value": "ARSHA MARAKKALAGE RIVIDU PESARA LAKSHMAN",
-    "rawMatches": [
-      "ARSHA MARAKKALAGE RIVIDU PESARA LAKSHMAN"
-    ]
+    "value": "ARSHA MARAKKALAGE RIVIDU PESARA LAKSHMAN"
   }
 }
 
