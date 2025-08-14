@@ -13,10 +13,10 @@ load_dotenv()
 
 from browser_use import Agent
 
-# Initialize the model
+# Initialize the model (limit tokens for faster local inference)
 llm = ChatOllama(
-model=os.getenv('BROWSER_USE_LLM_MODEL', 'gpt-oss:20b'),
-host=os.getenv('OLLAMA_HOST', 'http://localhost:11434'),
+  model=os.getenv('BROWSER_USE_LLM_MODEL', 'gpt-oss:20b'),
+  host=os.getenv('OLLAMA_HOST', 'http://localhost:11434')
 )
 
 
